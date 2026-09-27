@@ -18,21 +18,21 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--calibration", type=Path, help="Optional calibrated lens/stereo JSON")
     parser.add_argument("--output", required=True, type=Path, help="Output VR180 video path")
     parser.add_argument("--ffmpeg", default="ffmpeg", help="FFmpeg executable")
-    parser.add_argument("--imu-offset-s", type=float, default=-0.167, help="IMU time offset relative to video")
-    parser.add_argument("--gyro-scale", type=float, default=0.45, help="Scale applied to mapped gyro values")
+    parser.add_argument("--imu-offset-s", type=float, default=0.0, help="Measured IMU time offset relative to video")
+    parser.add_argument("--gyro-scale", type=float, default=1.0, help="Scale applied to mapped gyro values")
     parser.add_argument(
         "--max-correction-velocity-deg-s",
         type=float,
-        default=25.0,
-        help="Maximum frame-to-frame correction angular velocity",
+        default=0.0,
+        help="Maximum frame-to-frame correction angular velocity (0 disables limiting)",
     )
     parser.add_argument("--smooth-ms", type=float, default=1000.0, help="Stabilization smoothing time")
     parser.add_argument("--max-correction-deg", type=float, default=15.0, help="Soft correction limit")
     parser.add_argument(
         "--stabilization-mode",
         default="normal",
-        choices=["normal", "horizon-lock"],
-        help="Stabilization mode. normal is active; horizon-lock is planned.",
+        choices=["normal", "horizon-lock", "orientation-lock"],
+        help="Three-axis smoothing, horizon leveling, or fixed orientation",
     )
     parser.add_argument(
         "--imu-algorithm",

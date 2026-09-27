@@ -6,6 +6,7 @@ from math import cos, radians, sin
 import numpy as np
 
 from .core.quaternion import Quat
+from .core.stabilization import interpolate_quat
 from .imu import ImuSample
 from .vendor.pyvqf import PyVQF
 
@@ -56,13 +57,27 @@ def fuse_6d_vqf(
     if any(sample.gyro_xyz is None or sample.acceleration_xyz is None for sample in samples):
         raise ValueError("6D VQF requires gyro and acceleration at every sample.")
 
-    deltas = np.diff(np.array([sample.timestamp_s for sample in samples], dtype=float))
-    positive_deltas = deltas[deltas > 0.0]
-    if positive_deltas.size == 0:
+    times = [sample.timestamp_s for sample in samples]
+    deltas = np.diff(np.array(times, dtype=float))
+    if not np.all(np.isfinite(times)) or np.any(deltas <= 0.0):
         raise ValueError("6D VQF requires strictly increasing IMU timestamps.")
-    sample_period_s = float(np.median(positive_deltas))
+    sample_period_s = float(np.median(deltas))
     gyro = np.array([sample.gyro_xyz for sample in samples], dtype=float)
     acceleration = np.array([sample.acceleration_xyz for sample in samples], dtype=float)
+    if not np.all(np.isfinite(gyro)) or not np.all(np.isfinite(acceleration)):
+        raise ValueError("6D VQF requires finite sensor values.")
+
+    # PyVQF assumes a fixed period. Fill timestamp gaps on a uniform grid
+    # before fusion, then return poses at the original sensor timestamps.
+    fusion_times = times
+    if not np.allclose(deltas, sample_period_s, rtol=1e-4, atol=1e-9):
+        interval_count = max(1, int(np.ceil((times[-1] - times[0]) / sample_period_s)))
+        fusion_times = np.linspace(times[0], times[-1], interval_count + 1).tolist()
+        sample_period_s = (times[-1] - times[0]) / interval_count
+        gyro = np.column_stack([np.interp(fusion_times, times, gyro[:, axis]) for axis in range(3)])
+        acceleration = np.column_stack([
+            np.interp(fusion_times, times, acceleration[:, axis]) for axis in range(3)
+        ])
 
     filter_6d = PyVQF(sample_period_s, magDistRejectionEnabled=False)
     result = filter_6d.updateBatch(gyro, acceleration)
@@ -73,12 +88,15 @@ def fuse_6d_vqf(
     half_angle = radians(-90.0) / 2.0
     earth_z_to_world_y = Quat(cos(half_angle), sin(half_angle), 0.0, 0.0)
     world_quaternions = [earth_z_to_world_y.mul(quaternion) for quaternion in raw_quaternions]
-    times = [sample.timestamp_s for sample in samples]
     world_quaternions = _hemisphere_aligned_window_average(
-        times,
+        fusion_times,
         world_quaternions,
         orientation_window_s,
     )
+    if fusion_times is not times:
+        world_quaternions = [
+            interpolate_quat(fusion_times, world_quaternions, timestamp) for timestamp in times
+        ]
 
     fused = [
         ImuSample(

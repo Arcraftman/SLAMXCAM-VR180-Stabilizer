@@ -7,6 +7,19 @@ from slam_stabilizer.core.quaternion import Quat
 from slam_stabilizer.core.stabilization import SmoothParams, build_frame_stabilization
 from slam_stabilizer.cpu_renderer import _render_sbs_frame
 from slam_stabilizer.pipeline import StabilizationJob
+from slam_stabilizer.cli import build_parser
+
+
+def test_cli_and_job_defaults_preserve_sensor_amplitude_and_fast_correction():
+    args = build_parser().parse_args([
+        "--input-sbs", "input.mp4", "--imu", "imu.csv",
+        "--lens-profile", "lens.json", "--output", "output.mp4",
+        "--stabilization-mode", "orientation-lock",
+    ])
+    for name, expected in [("gyro_scale", 1.0), ("imu_offset_s", 0.0),
+                           ("max_correction_velocity_deg_s", 0.0)]:
+        assert getattr(args, name) == expected
+        assert StabilizationJob.__dataclass_fields__[name].default == expected
 
 
 def rotation(angle, axis):

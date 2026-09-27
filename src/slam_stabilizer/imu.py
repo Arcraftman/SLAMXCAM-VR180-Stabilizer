@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import csv
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from math import cos, radians, sin, sqrt
 from pathlib import Path
 import sqlite3
@@ -28,6 +28,16 @@ class SlamImuData:
     metadata: dict[str, str]
     rolling_shutter_skew_s: float | None
     gyro_filter_window_s: float
+    frame_exposure_times_s: list[float] = field(default_factory=list)
+    frame_readout_times_s: list[float] = field(default_factory=list)
+
+    @property
+    def frame_pose_times_s(self) -> list[float]:
+        """Exposure midpoint at the middle sensor row, on the IMU clock."""
+        return [time + (self.frame_exposure_times_s[i] if self.frame_exposure_times_s else 0.0) * 0.5
+                + (self.frame_readout_times_s[i] if self.frame_readout_times_s else
+                   self.rolling_shutter_skew_s or 0.0) * 0.5
+                for i, time in enumerate(self.frame_times_s)]
 
 
 def _col(row: dict[str, Any], *names: str) -> Any | None:
@@ -116,6 +126,7 @@ def load_imu_csv(
     gyro_units: str = "rad_s",
     axis_rotation: list[float] | tuple[float, ...] | None = None,
     gyro_scale: float = 1.0,
+    gyro_axis_rotation: list[float] | tuple[float, ...] | None = None,
 ) -> list[ImuSample]:
     rows = _load_rows(Path(path))
 
@@ -126,6 +137,7 @@ def load_imu_csv(
     q = np.array([1.0, 0.0, 0.0, 0.0], dtype=float)
     last_t: float | None = None
     imu_to_camera = _axis_rotation_matrix(axis_rotation)
+    gyro_to_camera = _axis_rotation_matrix(gyro_axis_rotation) if gyro_axis_rotation is not None else imu_to_camera
 
     for row in rows:
         t_raw = _col(row, "timestamp_s", "time_s", "t", "time", "timestamp")
@@ -156,7 +168,7 @@ def load_imu_csv(
             gz = _col(row, "gz", "gyro_z", "omega_z")
             if gx is None or gy is None or gz is None:
                 raise ValueError("IMU CSV needs either qw/qx/qy/qz or gx/gy/gz columns.")
-            gyro = _rotate_vector((float(gx), float(gy), float(gz)), imu_to_camera)
+            gyro = _rotate_vector((float(gx), float(gy), float(gz)), gyro_to_camera)
             gyro = tuple(value * float(gyro_scale) for value in gyro)
             dt = 0.0 if last_t is None else max(0.0, t - last_t)
             q = _normalize(_quat_mul(q, _delta_from_gyro(*gyro, dt, gyro_units)))
@@ -228,6 +240,7 @@ def load_slamimu(
     path: str | Path,
     axis_rotation: list[float] | tuple[float, ...] | None = None,
     gyro_filter_window_s: float = 0.015,
+    gyro_axis_rotation: list[float] | tuple[float, ...] | None = None,
 ) -> SlamImuData:
     """Load the SLAM Camera SQLite sidecar using Camera2 time as the origin."""
 
@@ -243,9 +256,11 @@ def load_slamimu(
             str(row["key"]): str(row["value"])
             for row in connection.execute("SELECT key, value FROM session_metadata")
         }
+        frame_columns = {row["name"] for row in connection.execute("PRAGMA table_info(video_frames)")}
+        exposure_column = "exposure_time_ns" if "exposure_time_ns" in frame_columns else "0 AS exposure_time_ns"
         frames = connection.execute(
-            """
-            SELECT frame_number, sensor_timestamp_ns, codec_pts_us, rolling_shutter_skew_ns
+            f"""
+            SELECT frame_number, sensor_timestamp_ns, codec_pts_us, rolling_shutter_skew_ns, {exposure_column}
             FROM video_frames
             ORDER BY frame_number
             """
@@ -295,6 +310,7 @@ def load_slamimu(
             raise ValueError("SLAM IMU database needs at least two uncalibrated gyro samples.")
 
         imu_to_camera = _axis_rotation_matrix(axis_rotation)
+        gyro_to_camera = _axis_rotation_matrix(gyro_axis_rotation) if gyro_axis_rotation is not None else imu_to_camera
         gyro_vectors = [
             (
                 int(row["timestamp_ns"]),
@@ -304,7 +320,7 @@ def load_slamimu(
                         float(row["y"]) - float(row["bias_y"] or 0.0),
                         float(row["z"]) - float(row["bias_z"] or 0.0),
                     ),
-                    imu_to_camera,
+                    gyro_to_camera,
                 ),
             )
             for row in gyro_rows
@@ -362,6 +378,8 @@ def load_slamimu(
             metadata=metadata,
             rolling_shutter_skew_s=rolling_shutter_skew_s,
             gyro_filter_window_s=gyro_filter_window_s,
+            frame_exposure_times_s=[max(0, int(row["exposure_time_ns"] or 0)) / 1e9 for row in frames],
+            frame_readout_times_s=[max(0, int(row["rolling_shutter_skew_ns"] or 0)) / 1e9 for row in frames],
         )
     finally:
         connection.close()

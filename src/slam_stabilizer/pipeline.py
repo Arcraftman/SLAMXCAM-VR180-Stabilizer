@@ -40,8 +40,8 @@ class StabilizationJob:
     calibration_path: Path | None
     output_path: Path
     ffmpeg: str = "ffmpeg"
-    imu_offset_s: float = -0.167
-    gyro_scale: float = 0.45
+    imu_offset_s: float = 0.0
+    gyro_scale: float = 1.0
     max_correction_velocity_deg_s: float = 0.0
     smooth_ms: float = 1000.0
     max_correction_deg: float = 15.0
@@ -93,6 +93,12 @@ def run_job(job: StabilizationJob, progress: ProgressCallback | None = None) -> 
     imu_to_camera_rotation = calibration.raw.get("imu_to_camera_rotation") or profile.raw.get(
         "imu_to_camera_rotation"
     )
+    # A custom common mapping retains its legacy meaning unless the user
+    # explicitly supplies a separate axial-vector (gyro) mapping.
+    gyro_to_camera_rotation = calibration.raw.get("imu_to_camera_gyro_rotation") or (
+        imu_to_camera_rotation if calibration.raw.get("imu_to_camera_rotation") else
+        profile.raw.get("imu_to_camera_gyro_rotation") or imu_to_camera_rotation
+    )
 
     input_video = job.video.input_sbs or job.video.input_left
     assert input_video is not None
@@ -118,15 +124,13 @@ def run_job(job: StabilizationJob, progress: ProgressCallback | None = None) -> 
         slamimu_data = load_slamimu(
             job.imu_path,
             axis_rotation=imu_to_camera_rotation,
+            gyro_axis_rotation=gyro_to_camera_rotation,
             gyro_filter_window_s=0.0 if job.imu_algorithm == "gyro-acc-fusion" else 0.015,
         )
         imu_samples = slamimu_data.samples
         imu_times = [sample.timestamp_s for sample in imu_samples]
         frame_times_s = slamimu_data.frame_times_s
-        frame_pose_times_s = [
-            time_s + (slamimu_data.rolling_shutter_skew_s or 0.0) * 0.5
-            for time_s in frame_times_s
-        ]
+        frame_pose_times_s = slamimu_data.frame_pose_times_s
         if len(frame_times_s) != video_params.frame_count:
             raise ValueError(
                 "SLAM IMU/video frame mismatch: "
@@ -155,6 +159,7 @@ def run_job(job: StabilizationJob, progress: ProgressCallback | None = None) -> 
             gyro_units=gyro_units,
             axis_rotation=imu_to_camera_rotation,
             gyro_scale=job.gyro_scale,
+            gyro_axis_rotation=gyro_to_camera_rotation,
         )
         imu_time_origin_s = imu_samples[0].timestamp_s
         imu_times = [sample.timestamp_s - imu_time_origin_s for sample in imu_samples]
@@ -230,9 +235,11 @@ def run_job(job: StabilizationJob, progress: ProgressCallback | None = None) -> 
         rolling_shutter_plan, rolling_shutter_max_row_correction_deg = build_rolling_shutter_matrices(
             imu_times=imu_times,
             imu_quaternions=imu_quats,
-            frame_start_times_s=frame_times_s or [],
+            frame_start_times_s=[time + exposure * 0.5 for time, exposure in zip(
+                frame_times_s or [], slamimu_data.frame_exposure_times_s)],
             readout_s=slamimu_data.rolling_shutter_skew_s,
             row_count=max(1, job.render_width // 2),
+            readout_times_s=slamimu_data.frame_readout_times_s,
         )
     correction_angles = [
         Quat.identity().angular_distance_deg(Quat.from_iter(frame.correction_wxyz))
@@ -337,6 +344,9 @@ def run_job(job: StabilizationJob, progress: ProgressCallback | None = None) -> 
             "normalized_timeline": True,
             "axis_mapping": "imu_to_camera_rotation",
             "imu_to_camera_rotation": imu_to_camera_rotation,
+            "imu_to_camera_gyro_rotation": gyro_to_camera_rotation,
+            "pose_timing": "first-row timestamp + exposure/2 + readout/2" if slamimu_data else "video frame time + offset",
+            "frame_exposure_times_s": slamimu_data.frame_exposure_times_s if slamimu_data else None,
             "gravity_reference_camera_xyz": gravity_vector,
             "gravity_alignment_wxyz": gravity_alignment.as_tuple() if gravity_alignment else None,
             "rolling_shutter_skew_s": (

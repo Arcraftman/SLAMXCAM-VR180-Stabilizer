@@ -5,8 +5,9 @@
   "gyro_units": "rad_s",
   "default_imu_rate_hz": 200,
   "projection": "equidistant",
-  "imu_to_camera_rotation": [0, 1, 0, 1, 0, 0, 0, 0, 1],
-  "notes": "SLAM XCAM 2026 public profile. Use the official Calibration Runtime or a custom measured JSON calibration.",
+  "imu_to_camera_rotation": [0, -1, 0, 1, 0, 0, 0, 0, -1],
+  "imu_to_camera_gyro_rotation": [0, 1, 0, -1, 0, 0, 0, 0, 1],
+  "notes": "SLAM XCAM 2026 landscape 270-degree Android sensor mapping, verified against paired 4K/6K footage. Separate polar acceleration and axial gyro mappings for renderer X-right/Y-up/Z-forward coordinates. Use the official Calibration Runtime or a custom measured JSON calibration.",
   "output": {
     "projection": "fisheye",
     "stereo_mode": "left_right",

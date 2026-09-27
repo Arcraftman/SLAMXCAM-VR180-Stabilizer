@@ -27,6 +27,27 @@ class FrameStabilization:
     correction_matrix3: list[list[float]]
 
 
+def bound_visual_pose(
+    raw: Quat,
+    estimated: Quat,
+    dt_s: float,
+    return_tau_s: float = 0.3,
+    max_deviation_deg: float = 3.0,
+) -> Quat:
+    """Keep short-term visual residuals while returning to the IMU trajectory.
+
+    The same resulting pose must be used for both eyes. This does not estimate
+    image motion; it bounds a caller's shared visual pose against its IMU prior.
+    """
+    if dt_s <= 0 or return_tau_s <= 0 or max_deviation_deg <= 0:
+        raise ValueError("Visual pose limits and time interval must be positive.")
+    pose = estimated.slerp(raw, dt_s / (return_tau_s + dt_s))
+    distance = raw.angular_distance_deg(pose)
+    if distance > max_deviation_deg:
+        pose = raw.slerp(pose, max_deviation_deg / distance)
+    return pose
+
+
 def interpolate_quat(times: list[float], quats: list[Quat], t: float) -> Quat:
     if not times or not quats:
         return Quat.identity()

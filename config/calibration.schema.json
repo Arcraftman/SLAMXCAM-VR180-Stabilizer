@@ -48,6 +48,13 @@
         }
       }
     },
+    "imu_to_camera_gyro_rotation": {
+      "description": "Optional gyro-specific axial-vector mapping; defaults to the common IMU mapping for legacy calibrations.",
+      "type": "array",
+      "items": { "type": "number" },
+      "minItems": 9,
+      "maxItems": 9
+    },
     "imu_to_camera_rotation": {
       "type": "array",
       "items": { "type": "number" },

@@ -291,8 +291,8 @@ def render_stabilized_sbs_cpu(
         # Preserve one decoded image per captured frame. FFmpeg's default
         # timestamp sync may otherwise insert frames before IMU correction,
         # shifting every subsequent frame away from its Camera2 timestamp.
-        "-vsync",
-        "0",
+        "-fps_mode",
+        "passthrough",
         "-pix_fmt",
         "rgb24",
         "-f",

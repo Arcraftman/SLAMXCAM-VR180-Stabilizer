@@ -53,7 +53,7 @@ def render_stabilized_sbs_runtime(
 
     decode_args = [
         "ffmpeg", "-v", "error", "-i", str(input_video), "-an",
-        "-vf", f"scale={output_width}:{output_height}", "-vsync", "0",
+        "-vf", f"scale={output_width}:{output_height}", "-fps_mode", "passthrough",
         "-pix_fmt", "rgb24", "-f", "rawvideo", "-",
     ]
     encode_args = [
